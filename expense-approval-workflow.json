@@ -1,0 +1,311 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Expense Reimbursement",
+        "formDescription": "Submit your expense for AI auto-approval.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Applicant",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Amount",
+              "fieldType": "number",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Category",
+              "fieldType": "dropdown",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Travel"
+                  },
+                  {
+                    "option": "Office"
+                  },
+                  {
+                    "option": "Entertainment"
+                  },
+                  {
+                    "option": "Other"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Description",
+              "fieldType": "textarea",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c03ad8eb-29f9-4d1d-aa7a-dd6d0df981c8",
+      "name": "On form submission",
+      "webhookId": "93317c96-bf1f-410b-8992-388ac42abf2c"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=你是一个财务审批助手。根据申请人提交的金额和类别，判断是否需要经理审批。\n规则：\n1. 金额超过 500 元，或类别为“Entertainment”，status 设为 PENDING_APPROVAL。\n2. 其余情况 status 设为 AUTO_APPROVED。\n\n请根据以下信息判断：\n申请人: {{ $json.Applicant }}, 金额: {{ $json.Amount }}, 类别: {{ $json.Category }}, 事由: {{ $json.Description }}\n\n输出必须是纯 JSON，绝对不要加任何 markdown 标记（如 ```json ），格式严格如下：\n{\"amount\": 数字, \"category\": \"类别\", \"status\": \"PENDING_APPROVAL 或 AUTO_APPROVED\", \"reason\": \"一句话说明判断理由\"}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        224,
+        0
+      ],
+      "id": "a86428a7-a361-4f05-8ac3-96c06dc7650a",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "deepseek-chat",
+          "mode": "id"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        160,
+        208
+      ],
+      "id": "fd0d1cf9-d168-4b61-869e-1e7c74f389fe",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "YTpKRdp8eGXbCNqm",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "33e31784-b977-4733-b24c-082dd4a169d3",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "PENDING_APPROVAL",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {
+          "ignoreCase": false
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        896,
+        0
+      ],
+      "id": "9da40c8b-d933-4b49-ac26-b607b3a84419",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 遍历传进来的数据，把大模型返回的文本转成真正的 JSON 对象\nfor (const item of $input.all()) {\n  // 清理可能存在的 markdown 标记，并解析 JSON\n  let rawText = item.json.text.replace(/```json/g, '').replace(/```/g, '').trim();\n  item.json = JSON.parse(rawText);\n}\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        736,
+        144
+      ],
+      "id": "18fac109-d0b6-49ac-a165-8204a0f2ecdd",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/59388512-3469-46c0-85dd-77393edab415",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1392,
+        -144
+      ],
+      "id": "8ec2a308-543d-4bb4-9480-7380098e2ebd",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 从表单节点获取原始数据\nconst form = $('On form submission').item.json;\n// 从当前输入获取 AI 的 reason\nconst ai = $input.first().json;\n\n// 拼装成飞书需要的格式\nconst feishuMsg = {\n  msg_type: \"text\",\n  content: {\n    text: `【待审批】申请人：${form.Applicant}，金额：${form.Amount} 元，类别：${form.Category}。事由：${form.Description}。\\nAI 判断理由：${ai.reason}`\n  }\n};\n\n// 输出给下一个节点\nreturn [{ json: feishuMsg }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -144
+      ],
+      "id": "f1ca87d5-a168-4dac-ba35-ae1fd57c7a41",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.feishu.cn/open-apis/bot/v2/hook/59388512-3469-46c0-85dd-77393edab415",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1472,
+        208
+      ],
+      "id": "f282bc7a-b8f5-4ffb-b45e-c29decbf57c5",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 修改后的代码：\nconst form = $('On form submission').item.json;\nconst ai = $input.first().json;\n\nconst feishuMsg = {\n  msg_type: \"text\",\n  content: {\n    text: `【已自动通过】申请人：${form.Applicant}，金额：${form.Amount} 元，类别：${form.Category}。系统已自动记录。`\n  }\n};\nreturn [{ json: feishuMsg }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        208
+      ],
+      "id": "540ec9d8-a242-48eb-95f0-d29554c36666",
+      "name": "Code in JavaScript2"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ca3e4cef-2ead-4e1e-80e1-3d188fcd5b23",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6fbf7a2085e28357c977cb9bd2cfa0ad9495c4d4a180efaa5a72b35471960dd6"
+  },
+  "nodeGroups": [],
+  "id": "OCailwE6icMeKNVu",
+  "tags": []
+}
